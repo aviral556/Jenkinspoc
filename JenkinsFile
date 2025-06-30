@@ -9,6 +9,7 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
+        sh 'checkout complete'
       }
     }
     stage('Build and Test') {
