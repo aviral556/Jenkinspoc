@@ -1,46 +1,48 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = ">= 5.0"
-    }
-  }
-}
-
 provider "aws" {
-  region = var.region
+  region = "us-west-2"
 }
 
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "5.1.0"
-
-  name = "eks-vpc"
-  cidr = var.vpc_cidr
-
-  azs             = ["${var.region}a", "${var.region}b"]
-  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
-  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
-
-  enable_nat_gateway = true
-  single_nat_gateway = true
+resource "aws_vpc" "eks_vpc" {
+  cidr_block = "10.0.0.0/16"
 }
 
-module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "18.31.2"  
+resource "aws_subnet" "eks_subnet" {
+  count                   = 2
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = cidrsubnet(aws_vpc.eks_vpc.cidr_block, 8, count.index)
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+}
 
-  cluster_name    = var.cluster_name
-  cluster_version = "1.27"
-  vpc_id          = module.vpc.vpc_id
-  subnet_ids      = module.vpc.private_subnets
+data "aws_availability_zones" "available" {}
 
-  node_groups = {
-    default = {
-      desired_capacity = 2
-      max_capacity     = 3
-      min_capacity     = 1
-      instance_types   = ["t3.medium"]
-    }
+resource "aws_iam_role" "eks_role" {
+  name = "eksClusterRole"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = {
+        Service = "eks.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_attach" {
+  role       = aws_iam_role.eks_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+}
+
+resource "aws_eks_cluster" "demo" {
+  name     = "demo-eks"
+  role_arn = aws_iam_role.eks_role.arn
+
+  vpc_config {
+    subnet_ids = aws_subnet.eks_subnet[*].id
   }
+
+  depends_on = [aws_iam_role_policy_attachment.eks_attach]
 }
